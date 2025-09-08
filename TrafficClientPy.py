@@ -1,3 +1,6 @@
+
+
+#//SOCKETER
 import agentpy as ap
 import socket
 import json
@@ -175,12 +178,14 @@ class CarAgent(ap.Agent):
         else:
             return
 
-        # Turning logic for north/south
+        # Turning logic for north/south - NEW: Check left arrow for lane 2
         if self.direction in ['north', 'south'] and not self.turning and self.will_turn:
             if self.lane == 2 and self.direction == 'north' and self.position[1] >= turn_point_z:
-                self.turning = True
-                self.rotation = -70.0
-                self.turn_direction = 'left'
+                # Lane 2 can only turn left when left arrow is green
+                if lights['left_arrow'].state == 'green':
+                    self.turning = True
+                    self.rotation = -70.0
+                    self.turn_direction = 'left'
             elif self.lane == 3 and self.direction == 'south' and self.position[1] <= turn_point_z:
                 self.turning = True
                 self.rotation = -70.0
@@ -211,8 +216,23 @@ class CarAgent(ap.Agent):
                         car_ahead = True
                         break
 
-        # Stop if needed
-        self.stopped = (not self.turning) and ((light.state in ["red", "yellow"] and near_light) or car_ahead)
+        # Stop logic - When left arrow is green, only lanes 1 and 2 can move
+        stop_for_light = False
+        if not self.turning:
+            # Check if left arrow is green (only lanes 1 and 2 can move)
+            if lights['left_arrow'].state == 'green':
+                # Only lanes 1 and 2 (northbound) can move during left arrow phase
+                if not (self.lane in [1, 2] and self.direction == 'north'):
+                    stop_for_light = True
+            # Normal light checking
+            elif light.state in ["red", "yellow"] and near_light:
+                stop_for_light = True
+            # Lane 2 cars wanting to turn left must stop if left arrow is red
+            elif (self.lane == 2 and self.will_turn and self.direction == 'north' and 
+                  near_light and lights['left_arrow'].state in ['red', 'yellow']):
+                stop_for_light = True
+                
+        self.stopped = stop_for_light or car_ahead
 
         # Move car
         if not self.stopped:
@@ -247,7 +267,7 @@ class CarAgent(ap.Agent):
 class TrafficLight(ap.Agent):
     def setup(self, name='north', axis='z', position=0.0, green_duration=5.0, red_duration=5.0):
         # Identification
-        self.name = name          # e.g., 'north', 'south', 'left', 'right'
+        self.name = name          # e.g., 'north', 'south', 'left', 'right', 'left_arrow'
         self.axis = axis          # 'z' for vertical roads, 'x' for horizontal/branches
         self.position = position  # numerical value along the axis
 
@@ -312,26 +332,52 @@ class TrafficModel(ap.Model):
     def setup(self):
         self.cars = []
 
-        # Define lights
+        # Define lights - NEW: Added left_arrow light
         self.north_light = TrafficLight(self); self.north_light.setup('north', 'z', -65.0)
         self.south_light = TrafficLight(self); self.south_light.setup('south', 'z', -22.0)
         self.left_light  = TrafficLight(self); self.left_light.setup('left', 'x', -65.0)
         self.right_light = TrafficLight(self); self.right_light.setup('right', 'x', 65.0)
+        self.left_arrow_light = TrafficLight(self); self.left_arrow_light.setup('left_arrow', 'z', -65.0)
 
         lights = {
             'north': self.north_light,
             'south': self.south_light,
             'left': self.left_light,
-            'right': self.right_light
+            'right': self.right_light,
+            'left_arrow': self.left_arrow_light
         }
 
-        # Define phases
         self.phases = [
-            {'north': 'green', 'south': 'green', 'left': 'red', 'right': 'red', 'duration': 7},
-            {'north': 'yellow', 'south': 'yellow', 'left': 'red', 'right': 'red', 'duration': 2},
-            {'north': 'red', 'south': 'red', 'left': 'green', 'right': 'green', 'duration': 7},
-            {'north': 'red', 'south': 'red', 'left': 'yellow', 'right': 'yellow', 'duration': 2},
+            # --- NORTH/SOUTH block ---
+            # Phase 1: Protected North left + North/South straight
+            {'north': 'green', 'south': 'green', 'left': 'red', 'right': 'red', 'left_arrow': 'green', 'duration': 7},
+
+            # Phase 2: North/South straight continues (arrow off)
+            {'north': 'green', 'south': 'green', 'left': 'red', 'right': 'red', 'left_arrow': 'red', 'duration': 11},
+
+            # Phase 3: North/South yellow (both directions)
+            {'north': 'yellow', 'south': 'yellow', 'left': 'red', 'right': 'red', 'left_arrow': 'red', 'duration': 5},
+
+
+            # --- EAST block ---
+            # Phase 4: East left turn only
+            {'north': 'red', 'south': 'red', 'left': 'green', 'right': 'red', 'left_arrow': 'red', 'duration': 8},
+
+            # Phase 5: East yellow
+            {'north': 'red', 'south': 'red', 'left': 'yellow', 'right': 'red', 'left_arrow': 'red', 'duration': 5},
+
+
+            # --- WEST block ---
+            # Phase 6: West right turn only
+            {'north': 'red', 'south': 'red', 'left': 'red', 'right': 'green', 'left_arrow': 'red', 'duration': 8},
+
+            # Phase 7: West yellow
+            {'north': 'red', 'south': 'red', 'left': 'red', 'right': 'yellow', 'left_arrow': 'red', 'duration': 5},
         ]
+
+
+
+
 
         self.controller = TrafficController(lights, self.phases)
 
@@ -357,7 +403,7 @@ class TrafficModel(ap.Model):
 
         if self.spawn_timer_lane2 >= 3.0:
             car = CarAgent(self); car.setup([20.0, -120.0], lane=2, direction='north')
-            self.cars.append(car); self.spawn_timer_lane2 = random.uniform(-2, 1)
+            self.cars.append(car); self.spawn_timer_lane2 = random.uniform(-6, 1)
 
         # Spawn cars southbound
         if self.spawn_timer_lane3 >= 3.0:
@@ -376,12 +422,13 @@ class TrafficModel(ap.Model):
         # Update lights via controller
         self.controller.step(dt)
 
-        # Update cars
+        # Update cars - NEW: Pass left_arrow light to cars
         lights = {
             'north': self.north_light,
             'south': self.south_light,
             'left': self.left_light,
-            'right': self.right_light
+            'right': self.right_light,
+            'left_arrow': self.left_arrow_light
         }
         for car in self.cars:
             car.step(lights, self.cars)
@@ -408,7 +455,8 @@ class TrafficModel(ap.Model):
                 'north': self.north_light,
                 'south': self.south_light,
                 'left': self.left_light,
-                'right': self.right_light
+                'right': self.right_light,
+                'left_arrow': self.left_arrow_light
             }.items()}
         }
 
@@ -465,3 +513,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         server.stop()
         server.join()
+
