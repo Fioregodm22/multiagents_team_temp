@@ -4,6 +4,7 @@ import threading
 import time
 import numpy as np
 import agentpy as ap
+import random
 
 # Import all classes from the Logic Client (assuming they're in the same file or imported)
 # Copy all the classes from Logic Client here or import them
@@ -156,7 +157,7 @@ class Vehicle(ap.Agent):
             # Fase 2a: Avanzar solo en horizontal por unos pasos
             if self.horizontal_turn_steps < HORIZONTAL_STEPS_TARGET:
                 self.x += self.direction * self.speed * dt
-                self.horizontal_turn_steps += 1 # Aumentamos el contador
+                self.horizontal_turn_steps += self.speed * dt # Aumentamos el contador
 
             # Fase 2b: Una vez completado el tramo horizontal, empezar la diagonal
             else:
@@ -389,8 +390,8 @@ class Vehicle(ap.Agent):
             elif self.diagonal_phase:
                 self.x += self.speed * dt
                 self.y -= self.speed * dt
-                self.diagonal_steps += 1
-                if self.diagonal_steps >= 10:
+                self.diagonal_steps += self.speed * dt
+                if self.diagonal_steps >= 11:
                     self.diagonal_phase = False
                     self.turning_right = True
             elif self.turning_right:
@@ -414,7 +415,7 @@ class Vehicle(ap.Agent):
             elif self.diagonal_phase:
                 self.x += (self.speed * dt) * 0.63
                 self.y -= (self.speed * dt) * 0.1
-                self.diagonal_steps += 0.5
+                self.diagonal_steps += 0.5 * self.speed * dt
                 if self.diagonal_steps >= 10:
                     self.diagonal_phase = False
                     self.go_diag_up = True  # activar fase diagonal-up
@@ -438,7 +439,7 @@ class Vehicle(ap.Agent):
             elif self.diagonal_phase:
                 self.x += self.speed * dt
                 self.y -= self.speed * dt
-                self.diagonal_steps += 1
+                self.diagonal_steps += self.speed * dt
                 if self.diagonal_steps >= 3:
                     self.diagonal_phase = False
                     self.go_straight = True
@@ -806,10 +807,9 @@ class RoadModel(ap.Model):
                     'rotation': self._calculate_rotation(v),
                     
                 })
-                print([v.x , 0, v.y ])
 
         # Format compatible with your Unity script structure
-        return {
+        result = {
             'cars': cars_data,
             'lights': {
                 'light_0': {
@@ -847,34 +847,63 @@ class RoadModel(ap.Model):
             },
             'debug': self.traffic_controller.get_debug_info()
         }
+        return result
 
     def _calculate_rotation(self, vehicle):
-        """Calculate rotation based on vehicle movement direction and lane"""
-        if hasattr(vehicle, 'turning_north') and vehicle.turning_north:
-            return 45.0  # Diagonal up
-        elif hasattr(vehicle, 'turning_right') and vehicle.turning_right:
-            return 0.0   # Right
-        elif vehicle.lane == "bottom":
+
+        if vehicle.lane in ['bottom']:
             if vehicle.go_diag_up:
-                return 45.0
+                if vehicle.x >= vehicle.stop_x:
+                    return 45
+                else:
+                    return 90
             else:
-                return 0.0  # Right
-        elif vehicle.lane == "top":
+                return 90
+        elif vehicle.lane in ['top']:
             if vehicle.go_diag_up:
-                return 135.0
-            else:
-                return 180.0  # Left
-        elif vehicle.lane in ["topleft", "topleftright", "topright"]:
+                if vehicle.x <= vehicle.stop_x:
+                    vehicle.stop_x = 1000
+                    return 45
+                else:
+                    return -90
+        elif vehicle.lane in ['topleft']:
             if vehicle.vertical_phase:
-                return 270.0  # Down
+                return 140
             elif vehicle.diagonal_phase:
-                return 315.0  # Diagonal down-right
-            else:
-                return 0.0    # Right
-        elif vehicle.lane == "custom_south":
-            return 270.0  # Down
-        else:
-            return 0.0
+                return 140
+            elif vehicle.turning_right:
+                return 90
+        elif vehicle.lane in ['topleftright']:
+            if vehicle.vertical_phase and not vehicle.diagonal_phase:
+                return 140
+            elif not vehicle.vertical_phase and vehicle.diagonal_phase:
+                return 90
+            elif not vehicle.vertical_phase and not vehicle.diagonal_phase:
+                return 45
+        elif vehicle.lane in ['topright']:
+            if vehicle.vertical_phase:
+                return 140
+            elif vehicle.diagonal_phase:
+                return 140
+            elif vehicle.go_straight:
+                return -90
+        elif vehicle.lane in ['custom_south']:
+            if vehicle.go_south:
+                return -130
+
+            if vehicle.direction == 1:
+                return 90
+            elif vehicle.direction == -1:
+                return -90
+            
+            
+
+            
+                
+
+        return 90  # Default
+
+        
 
 # -------------------------
 # Socket Server
@@ -894,7 +923,7 @@ class SocketServer(threading.Thread):
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((self.host, self.port))
         self.sock.listen(1)
-        print(f"Logic Server listening on {self.host}:{self.port}")
+        print(f"Server listening on {self.host}:{self.port}")
 
         try:
             self.client_conn, addr = self.sock.accept()
@@ -927,8 +956,8 @@ if __name__ == "__main__":
     # Parameters for the model
     parameters = {
         'dt': 1,
-        'light_period': 15.0,
-        'speed': 1.0,
+        'light_period': 40.0,
+        'speed': 0.5,
         'light_position': 25,
         'nogales_stop_y': 36.0,
         'road_length': 56,
@@ -936,9 +965,9 @@ if __name__ == "__main__":
         'steps': 250,
         'arrival_rate': 0.1,
         's1_hold_x': 37.0,
-        'queue_gap_custom_south': 3.0,
-        'custom_south_band': 1.5,
-        'topgroup_band': 2.0,
+        'queue_gap_custom_south': 15,
+        'custom_south_band': 15,
+        'topgroup_band': 15,
         's3_hold_y': 39.0,
         'turn_dx_scale_dir1': 0.2,
         'turn_hsteps_dir1': 8
@@ -953,7 +982,7 @@ if __name__ == "__main__":
     server.start()
     
     try:
-        print("Logic server running... Press Ctrl+C to stop")
+        print("Server running... Press Ctrl+C to stop")
         while True:
             time.sleep(1)
     except KeyboardInterrupt:

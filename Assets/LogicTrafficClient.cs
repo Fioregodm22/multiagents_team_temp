@@ -176,21 +176,9 @@ public class LogicTrafficClient : MonoBehaviour
             Renderer rend = go.GetComponent<Renderer>();
             if (rend != null)
             {
-                if (car.stopped) rend.material.color = Color.red;
-                else if (car.turning) rend.material.color = Color.yellow;
-                else
-                {
-                    switch (car.lane)
-                    {
-                        case "bottom": rend.material.color = Color.blue; break;
-                        case "top": rend.material.color = Color.green; break;
-                        case "topleft":
-                        case "topright":
-                            rend.material.color = Color.cyan; break;
-                        case "custom_south": rend.material.color = Color.magenta; break;
-                        default: rend.material.color = Color.white; break;
-                    }
-                }
+                System.Random rand = new System.Random(car.car_id);
+                Color color = new Color((float)rand.NextDouble(), (float)rand.NextDouble(), (float)rand.NextDouble());
+                rend.material.color = color;
             }
         }
 
